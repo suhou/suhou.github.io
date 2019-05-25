@@ -94,7 +94,7 @@
 <meta property="og:image" content="http://yoursite.com/pics/wildpointer.001.jpeg">
 <meta property="og:image" content="http://yoursite.com/pics/wildPointer.002.jpeg">
 <meta property="og:image" content="http://yoursite.com/pics/wildpointer.003.jpeg">
-<meta property="og:updated_time" content="2019-05-22T08:38:01.074Z">
+<meta property="og:updated_time" content="2019-05-25T14:56:23.450Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="从一个crash理解weak的延迟释放">
 <meta name="twitter:description" content="crash最近在项目内部碰到一个野指针crash, 说起来这个crash也很简单, 就是一个在声明一个对象的时候用的是assign, 然后对象释放了还继续调用改对象的方法就crash了. 先来看一个最简单的野指针示意图A对C对像是强持有, B对C对象的申明是assign, 当A释放了C以后, B在调用C的xxx方法就会野指针crash. 对于开发者来说, 很少会把对象申明成assign, 所以这种">
@@ -293,8 +293,10 @@
 <li>weak会通过objc_loadWeakRetained函数被修饰对象引用计数+1, 保证对象在正在使用的过程中不被释放, 这也是和assign非常不一样一个点.</li>
 <li>一些代码设计上的收获, 例如在设计基础库的时候对扩展性和稳定性的取舍, 不展开了.</li>
 </ol>
+<p><a href="https://github.com/suhou/WeakPointer" target="_blank" rel="noopener">demo</a></p>
 <h2 id="最后的最后"><a href="#最后的最后" class="headerlink" title="最后的最后"></a>最后的最后</h2><p>撰写本文的过程中尝试过用clang命令rewrite源码, 期间由于没有运行时环境支持开始一直报错, 现在附上一个iOS系统下的clang命令, 供有兴趣的读者参考:<br>xcrun -sdk iphonesimulator clang -rewrite-objc -fobjc-arc -stdlib=libc++ -mios-version-min=12.1 -fobjc-runtime=ios-12.1 -Wno-deprecated-declarations ViewController.m</p>
 <h2 id="参考"><a href="#参考" class="headerlink" title="参考:"></a>参考:</h2><p><a href="https://github.com/SenorSamuel/blog/issues/5" target="_blank" rel="noopener">Objective-C高级编程</a><br><a href="https://stackoverflow.com/questions/40993809/why-weak-object-will-be-added-to-autorelease-pool" target="_blank" rel="noopener">Why __weak object will be added to autorelease pool?</a></p>
+<h2 id="一个小广告"><a href="#一个小广告" class="headerlink" title="一个小广告"></a>一个小广告</h2><p>字节跳动西瓜视频团队真诚的邀请各路小伙伴的加入, 一起做有挑战, 有意义的事情, 欢迎大家投简历至<a href="mailto:gaobifan@bytedance.com" target="_blank" rel="noopener">gaobifan@bytedance.com</a></p>
 
       
     </div>
@@ -427,7 +429,7 @@
               
             
             
-              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#crash"><span class="nav-number">1.</span> <span class="nav-text">crash</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#weak"><span class="nav-number">2.</span> <span class="nav-text">weak</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#最后"><span class="nav-number">3.</span> <span class="nav-text">最后</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#最后的最后"><span class="nav-number">4.</span> <span class="nav-text">最后的最后</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#参考"><span class="nav-number">5.</span> <span class="nav-text">参考:</span></a></li></ol></div>
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#crash"><span class="nav-number">1.</span> <span class="nav-text">crash</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#weak"><span class="nav-number">2.</span> <span class="nav-text">weak</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#最后"><span class="nav-number">3.</span> <span class="nav-text">最后</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#最后的最后"><span class="nav-number">4.</span> <span class="nav-text">最后的最后</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#参考"><span class="nav-number">5.</span> <span class="nav-text">参考:</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#一个小广告"><span class="nav-number">6.</span> <span class="nav-text">一个小广告</span></a></li></ol></div>
             
           </div>
         </section>
