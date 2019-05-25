@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+<head><meta name="generator" content="Hexo 3.8.0">
+  <meta charset="utf-8">
+  
+
+  
+  <title>从一个crash理解weak的延迟释放 | su</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="crash最近在项目内部碰到一个野指针crash, 说起来这个crash也很简单, 就是一个在声明一个对象的时候用的是assign, 然后对象释放了还继续调用改对象的方法就crash了. 先来看一个最简单的野指针示意图A对C对像是强持有, B对C对象的申明是assign, 当A释放了C以后, B在调用C的xxx方法就会野指针crash. 对于开发者来说, 很少会把对象申明成assign, 所以这种">
+<meta property="og:type" content="article">
+<meta property="og:title" content="从一个crash理解weak的延迟释放">
+<meta property="og:url" content="http://yoursite.com/2019/05/14/从一个crash理解weak的延迟释放/index.html">
+<meta property="og:site_name" content="su">
+<meta property="og:description" content="crash最近在项目内部碰到一个野指针crash, 说起来这个crash也很简单, 就是一个在声明一个对象的时候用的是assign, 然后对象释放了还继续调用改对象的方法就crash了. 先来看一个最简单的野指针示意图A对C对像是强持有, B对C对象的申明是assign, 当A释放了C以后, B在调用C的xxx方法就会野指针crash. 对于开发者来说, 很少会把对象申明成assign, 所以这种">
+<meta property="og:locale" content="zh-Hans">
+<meta property="og:image" content="http://yoursite.com/pics/wildpointer.001.jpeg">
+<meta property="og:image" content="http://yoursite.com/pics/wildPointer.002.jpeg">
+<meta property="og:image" content="http://yoursite.com/pics/wildpointer.003.jpeg">
+<meta property="og:updated_time" content="2019-05-22T08:38:01.074Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="从一个crash理解weak的延迟释放">
+<meta name="twitter:description" content="crash最近在项目内部碰到一个野指针crash, 说起来这个crash也很简单, 就是一个在声明一个对象的时候用的是assign, 然后对象释放了还继续调用改对象的方法就crash了. 先来看一个最简单的野指针示意图A对C对像是强持有, B对C对象的申明是assign, 当A释放了C以后, B在调用C的xxx方法就会野指针crash. 对于开发者来说, 很少会把对象申明成assign, 所以这种">
+<meta name="twitter:image" content="http://yoursite.com/pics/wildpointer.001.jpeg">
+  
+    <link rel="alternate" href="/atom.xml" title="su" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+</html>
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">su</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://yoursite.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-从一个crash理解weak的延迟释放" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/05/14/从一个crash理解weak的延迟释放/" class="article-date">
+  <time datetime="2019-05-14T12:36:07.624Z" itemprop="datePublished">2019-05-14</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      从一个crash理解weak的延迟释放
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="crash"><a href="#crash" class="headerlink" title="crash"></a>crash</h2><p>最近在项目内部碰到一个野指针crash, 说起来这个crash也很简单, 就是一个在声明一个对象的时候用的是assign, 然后对象释放了还继续调用改对象的方法就crash了. 先来看一个最简单的野指针示意图<br><img src="/pics/wildpointer.001.jpeg" alt="野指针1" title="野指针1"><br>A对C对像是强持有, B对C对象的申明是assign, 当A释放了C以后, B在调用C的xxx方法就会野指针crash. 对于开发者来说, 很少会把对象申明成assign, 所以这种写法引发的crash是比较好排查的, 下面看另一种示意图.<br><img src="/pics/wildPointer.002.jpeg" alt="野指针2" title="野指针2"><br>这里B对D是弱引用, C对D是assign引用, 笔者这里示意图里想表明的是C其实是通过B的某些调用才触发对assign对象D的方法调用, 同样的原因唯一对D强引用的A如果在这个过程中释放了D就会造成crash, 说到这里可能会问, 什么场景需要这么费劲的调用, 看上去B也可以直接对D进行调用而且weak不会造成野指针不是吗. 还原一下当时的crash场景.<br><img src="/pics/wildpointer.003.jpeg" alt="野指针3" title="野指针3"><br>简单说就是A对象通过一个manager(或者viewModel之类的),发出一个网络请求, 图2中的B在这个场景中其实是一个网络库, manager是网络请求的delegate, 负责网络请求之后的回调, 这个网络库在设计的时候为了扩展性考虑在触发回调的时候使用了一个NSInvocation. 关键代码:<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line">@interface SSHttpOperation()</span><br><span class="line">...</span><br><span class="line">//网络回调的target</span><br><span class="line">@property(nonatomic, weak)id target;</span><br><span class="line">//外部在发网络请求的时候可以随意设置回调方法, 达到扩展性</span><br><span class="line">@property(nonatomic, assign)SEL didFinishSelector;</span><br><span class="line">...</span><br><span class="line">@end</span><br><span class="line"></span><br><span class="line">@implementation SSHttpOperation</span><br><span class="line">- (void)notifyWithResult:(NSDictionary*)result error:(NSError*)error continueWhenCancel:(BOOL)continueWhenCancel &#123;</span><br><span class="line">	//网络请求回来, 进行外部业务回调</span><br><span class="line">    ...</span><br><span class="line">       if(target &amp;&amp; [target respondsToSelector:didFinishSelector])  &#123;</span><br><span class="line">           NSMethodSignature *signature = [target methodSignatureForSelector:didFinishSelector];</span><br><span class="line">           NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];</span><br><span class="line">           [invocation setTarget:target]; // 1</span><br><span class="line">           [invocation setSelector:didFinishSelector];</span><br><span class="line">           id wself = self;</span><br><span class="line">           [invocation setArgument:&amp;wself atIndex:2];</span><br><span class="line">           [invocation setArgument:&amp;result atIndex:3];</span><br><span class="line">           [invocation setArgument:&amp;logicError atIndex:4];</span><br><span class="line">           [invocation setArgument:&amp;userInfo atIndex:5];</span><br><span class="line">           [invocation invoke];</span><br><span class="line"></span><br><span class="line">       &#125;</span><br><span class="line">      ...</span><br><span class="line">&#125;</span><br><span class="line">@end</span><br></pre></td></tr></table></figure></p>
+<p>网络库Operation的<code>关键</code>代码其实就是这个, 代码<code>1</code>的位置<code>[invocation setTarget:target]</code>, 点开<code>NSInvocation.h</code>的头文件可以看到<code>NSInvocation</code>对<code>target</code>的申明是assign…<br>再简单看一下外部是怎么操作的引起crash:<br> <figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Object A</span><br><span class="line"></span><br><span class="line">[self.pgcActionManager changePGCAccount:mediaID likeStatus:!hasSubscribed extraTrack:extraTrack likeBlock:^(BOOL isLiked, NSError *error, NSArray&lt;TTVUserAccount *&gt; *recommendUsers) &#123;</span><br><span class="line">       // 一堆业务操作 再block的最后把这个manager置为nil</span><br><span class="line">       ...</span><br><span class="line">       self.pgcActionManager = nil; // 2</span><br><span class="line">   &#125;];</span><br></pre></td></tr></table></figure></p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">Manager</span><br><span class="line"></span><br><span class="line"> </span><br><span class="line">- (void)changePGCAccount:(NSString *)mediaID likeStatus:(BOOL)changeToLike likeBlock:(SSPGCActionManagerLikeBlock)likeBlock&#123;</span><br><span class="line">	...</span><br><span class="line">	self.likeOperation = [SSHttpOperation httpOperationWithURLString:url getParameter:nil postParameter:parameterDict userInfo:userInfo];</span><br><span class="line">    [_likeOperation setQueuePriority:NSOperationQueuePriorityHigh];</span><br><span class="line">    [_likeOperation setFinishTarget:self selector:@selector(operation:finishedResult:error:userInfo:)];</span><br><span class="line">    [SSOperationManager addOperation:_likeOperation];</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">#pragma mark - 网络回调</span><br><span class="line">- (void)operation:(SSHttpOperation*)operation finishedResult:(NSDictionary*)result error:(NSError*)error userInfo:(id)userInfo&#123;</span><br><span class="line"> // 业务逻辑代码 xxx</span><br><span class="line"> //3</span><br><span class="line"> if (_likeBlock) &#123;</span><br><span class="line">	  _likeBlock(isFollow, followError, recommendUsersArray);</span><br><span class="line">   &#125;</span><br><span class="line"> // 后续的业务逻辑代码</span><br><span class="line"> // 4</span><br><span class="line"> [TTVLoginManager showLoginForFollowWithResult:@&quot;你的关注太多,登录保存一下吧&quot; extraTrackDic:@&#123;@&quot;isOver&quot;:@(1)&#125; position:self.position];</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>上面摘抄了一些关键代码, 调用顺序大概是:<br>Object A业务逻辑触发了[Manager changePGCAccount…]方法<br>-&gt; Manager通过网络库发请求并通过NSInvocation触发回调<code>(代码1)</code><br>-&gt; 回调方法执行likeBlock<code>(代码3)</code><br>-&gt; block内Object A释放Manager<code>(代码2)</code>, Manager dealloc方法也在此时执行<br>-&gt; likeBlock执行完后由于业务需求调用了self.position<code>(代码4)</code>, 崩擦擦.</p>
+<h2 id="weak"><a href="#weak" class="headerlink" title="weak"></a>weak</h2><p>至此我们找到了crash的原因, 修改的方法有很多, 上面我们有说到Operation对Manager其实是弱引用的, 只是为了扩展性?(大概)才通过NSInvocation调用本该是自己的delagte回调, 其实如果牺牲一点扩展性在现在代码的使用<code>NSInvocation</code>的位置<code>(代码1)</code>替换成<code>[self.target xxxx]</code>就不会出问题了, 事实上现在我们大部分的代理在使用过程中也是这个思路.<br>事实证明,直接调确实是没有问题的, 并且有一个有意思的现象, 通过这种调用在<code>(代码2)self.pgcActionManager = nil;</code>的时候, 这个Manager没有立即走dealloc, 也就是并没有立即释放, 换句话说, 还有别人在持有这个Manager? 一个常识是weak修饰的对象会在对象释放之后置为nil, 但是这和被修饰对象不立即释放并没有什么关系.<br>于是想到了《Objective-C高级编程 iOS与OS X多线程和内存管理》一书里提到过的,weak会将被修饰对象加入autoreleasePool达到延迟释放的效果, 笔者在读这一段的时候做过诸多实验, 最后的结论是对这个说法表示怀疑, 但是现在看确实是有延迟释放的效果. 直接看答案吧<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">&#123;</span><br><span class="line">  id __weak obj1 = obj;</span><br><span class="line">  NSLog(@&quot;%@&quot;, obj1);</span><br><span class="line">&#125;</span><br><span class="line">/* iOS5及之前编译器做法 */</span><br><span class="line">id obj1;</span><br><span class="line">objc_initWeak(&amp;obj1, obj);</span><br><span class="line">id tmp = objc_loadWeakRetained(&amp;obj1);</span><br><span class="line">objc_autorelease(tmp);//错误!!!mistake</span><br><span class="line">NSLog(@&quot;%@&quot;, tmp);</span><br><span class="line">objc_destroyWeak(&amp;obj1);</span><br><span class="line"></span><br><span class="line">/* 现在的编译器做法*/</span><br><span class="line">id obj = objc_msgSend(NSObject, &quot;new&quot;);</span><br><span class="line">id obj1;</span><br><span class="line">objc_initWeak(&amp;obj1, obj);</span><br><span class="line">id tmp = objc_loadWeakRetained(obj1);//objc_loadWeakRetained would increment the reference count to ensure that tmp is alive in the NSLog statement.</span><br><span class="line">NSLog(@&quot;%@&quot;, obj1);</span><br><span class="line">objc_release(tmp);</span><br><span class="line">objc_destroyWeak(&amp;obj1);</span><br><span class="line">objc_storeStrong(&amp;obj, 0);//release</span><br></pre></td></tr></table></figure></p>
+<p>现在的编译器在我们使用weak对象的时候会帮我们插入<code>objc_loadWeakRetained</code>导致weak对象引用计数+1, 达到在使用weak对象的时候改对象永远不可能被释放, 在我们的case中就是<code>[self.target xxxx]</code>这个<code>xxx</code>方法中即使将有代码将<code>target</code>释放了, 表面上看引用计数好像为0了, 应该释放, 事实上只有在这个方法走完了引用计数才有可能清0. 以前知道这个实现, 但是没注意这个特性, 现在看只想说奈斯 兄dei.</p>
+<h2 id="最后"><a href="#最后" class="headerlink" title="最后"></a>最后</h2><p>最后总结一下这次改bug的收获:</p>
+<ol>
+<li>NSInvocation是有可能引起野指针的, 使用的时候要多加小心, 尤其是在基础库中的使用.当然就正常使用规范来说文中的那个likeBlock应该放在方法末尾执行(这样也不会crash), 只是业务需要在block执行后继续执行一些操作.</li>
+<li>weak会通过objc_loadWeakRetained函数被修饰对象引用计数+1, 保证对象在正在使用的过程中不被释放, 这也是和assign非常不一样一个点.</li>
+<li>一些代码设计上的收获, 例如在设计基础库的时候对扩展性和稳定性的取舍, 不展开了.</li>
+</ol>
+<h2 id="最后的最后"><a href="#最后的最后" class="headerlink" title="最后的最后"></a>最后的最后</h2><p>撰写本文的过程中尝试过用clang命令rewrite源码, 期间由于没有运行时环境支持开始一直报错, 现在附上一个iOS系统下的clang命令, 供有兴趣的读者参考:<br>xcrun -sdk iphonesimulator clang -rewrite-objc -fobjc-arc -stdlib=libc++ -mios-version-min=12.1 -fobjc-runtime=ios-12.1 -Wno-deprecated-declarations ViewController.m</p>
+<h2 id="参考"><a href="#参考" class="headerlink" title="参考:"></a>参考:</h2><p><a href="https://github.com/SenorSamuel/blog/issues/5" target="_blank" rel="noopener">Objective-C高级编程</a><br><a href="https://stackoverflow.com/questions/40993809/why-weak-object-will-be-added-to-autorelease-pool" target="_blank" rel="noopener">Why __weak object will be added to autorelease pool?</a></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://yoursite.com/2019/05/14/从一个crash理解weak的延迟释放/" data-id="cjw3k77w70008fao3353o9inx" class="article-share-link">Share</a>
+      
+      
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/05/21/从一个crash体验strong的延迟释放/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          从一个crash体验strong的延迟释放
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2018/01/21/带着问题看源码----子线程AutoRelease对象何时释放/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">带着问题看源码----子线程AutoRelease对象何时释放</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+
+  
+    
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/05/">May 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2018/01/">January 2018</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/09/">September 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/07/">July 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/03/">March 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/09/">September 2016</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/07/">July 2016</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/06/">June 2016</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2019/05/21/从一个crash体验strong的延迟释放/">从一个crash体验strong的延迟释放</a>
+          </li>
+        
+          <li>
+            <a href="/2019/05/14/从一个crash理解weak的延迟释放/">从一个crash理解weak的延迟释放</a>
+          </li>
+        
+          <li>
+            <a href="/2018/01/21/带着问题看源码----子线程AutoRelease对象何时释放/">带着问题看源码----子线程AutoRelease对象何时释放</a>
+          </li>
+        
+          <li>
+            <a href="/2018/01/17/带着问题读源码----KVO/">带着问题读源码----KVO</a>
+          </li>
+        
+          <li>
+            <a href="/2017/09/29/KVC原理小记/">KVC原理小记录</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2019 su<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  <link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+  <script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+<script src="/js/script.js"></script>
+
+
+
+  </div>
+</body>
+</html>

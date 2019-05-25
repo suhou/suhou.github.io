@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head><meta name="generator" content="Hexo 3.8.0">
+  <meta charset="utf-8">
+  
+
+  
+  <title>带着问题看源码----子线程AutoRelease对象何时释放 | su</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="首先是一个常规问题，autorelease对象何时释放？答：在AutoreleasePoolPage pop的时候释放，在主线程的runloop中，有两个oberserver负责创建和清空autoreleasepool，详情可以看YY的深入理解runloop。那么子线程呢？子线程的runloop都需要手动开启，那么子线程中使用autorelease对象会内存泄漏吗，如果不会又是什么时候释放呢。 R">
+<meta property="og:type" content="article">
+<meta property="og:title" content="带着问题看源码----子线程AutoRelease对象何时释放">
+<meta property="og:url" content="http://yoursite.com/2018/01/21/带着问题看源码----子线程AutoRelease对象何时释放/index.html">
+<meta property="og:site_name" content="su">
+<meta property="og:description" content="首先是一个常规问题，autorelease对象何时释放？答：在AutoreleasePoolPage pop的时候释放，在主线程的runloop中，有两个oberserver负责创建和清空autoreleasepool，详情可以看YY的深入理解runloop。那么子线程呢？子线程的runloop都需要手动开启，那么子线程中使用autorelease对象会内存泄漏吗，如果不会又是什么时候释放呢。 R">
+<meta property="og:locale" content="zh-Hans">
+<meta property="og:image" content="http://yoursite.com/pics/threadwithoutrunloop.png">
+<meta property="og:image" content="http://yoursite.com/pics/timersource.png">
+<meta property="og:updated_time" content="2019-05-14T12:36:37.348Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="带着问题看源码----子线程AutoRelease对象何时释放">
+<meta name="twitter:description" content="首先是一个常规问题，autorelease对象何时释放？答：在AutoreleasePoolPage pop的时候释放，在主线程的runloop中，有两个oberserver负责创建和清空autoreleasepool，详情可以看YY的深入理解runloop。那么子线程呢？子线程的runloop都需要手动开启，那么子线程中使用autorelease对象会内存泄漏吗，如果不会又是什么时候释放呢。 R">
+<meta name="twitter:image" content="http://yoursite.com/pics/threadwithoutrunloop.png">
+  
+    <link rel="alternate" href="/atom.xml" title="su" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+</html>
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">su</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://yoursite.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-带着问题看源码----子线程AutoRelease对象何时释放" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2018/01/21/带着问题看源码----子线程AutoRelease对象何时释放/" class="article-date">
+  <time datetime="2018-01-21T12:01:01.000Z" itemprop="datePublished">2018-01-21</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      带着问题看源码----子线程AutoRelease对象何时释放
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>首先是一个常规问题，autorelease对象何时释放？答：在AutoreleasePoolPage pop的时候释放，在主线程的runloop中，有两个oberserver负责创建和清空autoreleasepool，详情可以看YY的<a href="https://blog.ibireme.com/2015/05/18/runloop/" target="_blank" rel="noopener">深入理解runloop</a>。那么子线程呢？子线程的runloop都需要手动开启，那么子线程中使用autorelease对象会内存泄漏吗，如果不会又是什么时候释放呢。</p>
+<h2 id="Runloop源码"><a href="#Runloop源码" class="headerlink" title="Runloop源码"></a>Runloop源码</h2><p>带着这个问题，我们看一看runloop的源码中给出的答案。</p>
+<h3 id="autoreleasepool创建"><a href="#autoreleasepool创建" class="headerlink" title="autoreleasepool创建"></a>autoreleasepool创建</h3><p>在MRC下，使用__autoreleasing修饰符等同于MRC下调用autorelease方法，所以在NSObject源码中找到-(id)autorelese方法开始看。</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">-(id) autorelease</span><br><span class="line">&#123;</span><br><span class="line">    return _objc_rootAutorelease(self);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>可以看到这个方法里只是简单的调了一下<code>_objc_rootAutorelease()</code>，继续跟进。</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line">id</span><br><span class="line">_objc_rootAutorelease(id obj)</span><br><span class="line">&#123;</span><br><span class="line">    assert(obj);</span><br><span class="line">    return obj-&gt;rootAutorelease();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">...</span><br><span class="line"></span><br><span class="line">// Base autorelease implementation, ignoring overrides.</span><br><span class="line">inline id </span><br><span class="line">objc_object::rootAutorelease()</span><br><span class="line">&#123;</span><br><span class="line">    if (isTaggedPointer()) return (id)this;</span><br><span class="line">    if (prepareOptimizedReturn(ReturnAtPlus1)) return (id)this;</span><br><span class="line"></span><br><span class="line">    return rootAutorelease2();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">...</span><br><span class="line"></span><br><span class="line">__attribute__((noinline,used))</span><br><span class="line">id </span><br><span class="line">objc_object::rootAutorelease2()</span><br><span class="line">&#123;</span><br><span class="line">    assert(!isTaggedPointer());</span><br><span class="line">    return AutoreleasePoolPage::autorelease((id)this);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>检查是否AutoreleasePoolPage::autorelease是标签指针和是否要做不加入autoreleasepool的优化，然后<code>rootAutorelease2()</code>。最后走入了<code>AutoreleasePoolPage::autorelease()</code>。<br>接下来看看<code>AutoreleasePoolPage</code>这个类，有关这个类的说明，可以看看sunny的<a href="http://blog.sunnyxx.com/2014/10/15/behind-autorelease/" target="_blank" rel="noopener">黑幕背后的Autorelease</a>。现在来看看AutoreleasePoolPage中的实现。</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br></pre></td><td class="code"><pre><span class="line">public:</span><br><span class="line">    static inline id autorelease(id obj)</span><br><span class="line">    &#123;</span><br><span class="line">        assert(obj);</span><br><span class="line">        assert(!obj-&gt;isTaggedPointer());</span><br><span class="line">        id *dest __unused = autoreleaseFast(obj);</span><br><span class="line">        assert(!dest  ||  dest == EMPTY_POOL_PLACEHOLDER  ||  *dest == obj);</span><br><span class="line">        return obj;</span><br><span class="line">    &#125;</span><br><span class="line">    ...</span><br><span class="line">    static inline id *autoreleaseFast(id obj)</span><br><span class="line">    &#123;</span><br><span class="line">        AutoreleasePoolPage *page = hotPage();</span><br><span class="line">        if (page &amp;&amp; !page-&gt;full()) &#123;</span><br><span class="line">            return page-&gt;add(obj);</span><br><span class="line">        &#125; else if (page) &#123;</span><br><span class="line">            return autoreleaseFullPage(obj, page);</span><br><span class="line">        &#125; else &#123;</span><br><span class="line">            return autoreleaseNoPage(obj);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    ...</span><br><span class="line">        static __attribute__((noinline))</span><br><span class="line">    id *autoreleaseNoPage(id obj)</span><br><span class="line">    &#123;</span><br><span class="line">        // &quot;No page&quot; could mean no pool has been pushed</span><br><span class="line">        // or an empty placeholder pool has been pushed and has no contents yet</span><br><span class="line">        assert(!hotPage());</span><br><span class="line"></span><br><span class="line">        bool pushExtraBoundary = false;</span><br><span class="line">        if (haveEmptyPoolPlaceholder()) &#123;</span><br><span class="line">            // We are pushing a second pool over the empty placeholder pool</span><br><span class="line">            // or pushing the first object into the empty placeholder pool.</span><br><span class="line">            // Before doing that, push a pool boundary on behalf of the pool </span><br><span class="line">            // that is currently represented by the empty placeholder.</span><br><span class="line">            pushExtraBoundary = true;</span><br><span class="line">        &#125;</span><br><span class="line">        else if (obj != POOL_BOUNDARY  &amp;&amp;  DebugMissingPools) &#123;</span><br><span class="line">            // We are pushing an object with no pool in place, </span><br><span class="line">            // and no-pool debugging was requested by environment.</span><br><span class="line">            _objc_inform(&quot;MISSING POOLS: (%p) Object %p of class %s &quot;</span><br><span class="line">                         &quot;autoreleased with no pool in place - &quot;</span><br><span class="line">                         &quot;just leaking - break on &quot;</span><br><span class="line">                         &quot;objc_autoreleaseNoPool() to debug&quot;, </span><br><span class="line">                         pthread_self(), (void*)obj, object_getClassName(obj));</span><br><span class="line">            objc_autoreleaseNoPool(obj);</span><br><span class="line">            return nil;</span><br><span class="line">        &#125;</span><br><span class="line">        else if (obj == POOL_BOUNDARY  &amp;&amp;  !DebugPoolAllocation) &#123;</span><br><span class="line">            // We are pushing a pool with no pool in place,</span><br><span class="line">            // and alloc-per-pool debugging was not requested.</span><br><span class="line">            // Install and return the empty pool placeholder.</span><br><span class="line">            return setEmptyPoolPlaceholder();</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        // We are pushing an object or a non-placeholder&apos;d pool.</span><br><span class="line"></span><br><span class="line">        // Install the first page.</span><br><span class="line">        AutoreleasePoolPage *page = new AutoreleasePoolPage(nil);</span><br><span class="line">        setHotPage(page);</span><br><span class="line">        </span><br><span class="line">        // Push a boundary on behalf of the previously-placeholder&apos;d pool.</span><br><span class="line">        if (pushExtraBoundary) &#123;</span><br><span class="line">            page-&gt;add(POOL_BOUNDARY);</span><br><span class="line">        &#125;</span><br><span class="line">        </span><br><span class="line">        // Push the requested object or pool.</span><br><span class="line">        return page-&gt;add(obj);</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+<p>这里我们找到了我们想看的代码，如果当前线程没有AutorelesepoolPage的话，代码执行顺序为autorelease -&gt; autoreleaseFast -&gt; autoreleaseNoPage。<br>在autoreleaseNoPage方法中，会创建一个hotPage，然后调用page-&gt;add(obj)。也就是说即使这个线程没有AutorelesepoolPage，使用了autorelease对象时也会new一个AutoreleasepoolPage出来管理autorelese对象，不用担心内存泄漏。</p>
+<h3 id="何时释放"><a href="#何时释放" class="headerlink" title="何时释放"></a>何时释放</h3><p>明确了何时创建autoreleasepool以后就自然而然的有下一个问题，这个autoreleasepool何时清空？<br>对于这个问题，这里使用<code>watchpoint set variable</code>命令来观察。<br>首先是一个最简单的场景，创建一个子线程。</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">__weak id obj;</span><br><span class="line"></span><br><span class="line">...</span><br><span class="line">[NSThread detachNewThreadSelector:@selector(createAndConfigObserverInSecondaryThread) toTarget:self withObject:nil];</span><br></pre></td></tr></table></figure>
+<p>使用一个weak指针观察子线程中的autorelease对象，子线程中执行的任务。</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">- (void)createAndConfigObserverInSecondaryThread&#123;</span><br><span class="line">    __autoreleasing id test = [NSObject new];</span><br><span class="line">    NSLog(@&quot;obj = %@&quot;, test);</span><br><span class="line">    obj = test;</span><br><span class="line">    [[NSThread currentThread] setName:@&quot;test runloop thread&quot;];</span><br><span class="line">    NSLog(@&quot;thread ending&quot;);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>在obj = test处设置断点使用<code>watchpoint set variable obj</code>命令观察obj，可以看到obj在释放时的方法调用栈是这样的。<br><img src="/pics/threadwithoutrunloop.png" alt="threadwithoutrunloop"><br>通过这个调用栈可以看到释放的时机在_pthread_exit。然后执行到AutorelepoolPage的tls_dealloc方法。这个方法如下</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">static void tls_dealloc(void *p)</span><br><span class="line">&#123;</span><br><span class="line">    if (p == (void*)EMPTY_POOL_PLACEHOLDER) &#123;</span><br><span class="line">        // No objects or pool pages to clean up here.</span><br><span class="line">        return;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    // reinstate TLS value while we work</span><br><span class="line">    setHotPage((AutoreleasePoolPage *)p);</span><br><span class="line"></span><br><span class="line">    if (AutoreleasePoolPage *page = coldPage()) &#123;</span><br><span class="line">        if (!page-&gt;empty()) pop(page-&gt;begin());  // pop all of the pools</span><br><span class="line">        if (DebugMissingPools || DebugPoolAllocation) &#123;</span><br><span class="line">            // pop() killed the pages already</span><br><span class="line">        &#125; else &#123;</span><br><span class="line">            page-&gt;kill();  // free all of the pages</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    // clear TLS value so TLS destruction doesn&apos;t loop</span><br><span class="line">    setHotPage(nil);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p> 在这找到了<code>if (!page-&gt;empty()) pop(page-&gt;begin());</code>这句关键代码。再往上看一点，在_pthread_exit时会执行下面这个函数</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">void</span><br><span class="line">_pthread_tsd_cleanup(pthread_t self)</span><br><span class="line">&#123;</span><br><span class="line">#if !VARIANT_DYLD</span><br><span class="line">	int j;</span><br><span class="line"></span><br><span class="line">	// clean up dynamic keys first</span><br><span class="line">	for (j = 0; j &lt; PTHREAD_DESTRUCTOR_ITERATIONS; j++) &#123;</span><br><span class="line">		pthread_key_t k;</span><br><span class="line">		for (k = __pthread_tsd_start; k &lt;= self-&gt;max_tsd_key; k++) &#123;</span><br><span class="line">			_pthread_tsd_cleanup_key(self, k);</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line"></span><br><span class="line">	self-&gt;max_tsd_key = 0;</span><br><span class="line"></span><br><span class="line">	// clean up static keys</span><br><span class="line">	for (j = 0; j &lt; PTHREAD_DESTRUCTOR_ITERATIONS; j++) &#123;</span><br><span class="line">		pthread_key_t k;</span><br><span class="line">		for (k = __pthread_tsd_first; k &lt;= __pthread_tsd_max; k++) &#123;</span><br><span class="line">			_pthread_tsd_cleanup_key(self, k);</span><br><span class="line">		&#125;</span><br><span class="line">	&#125;</span><br><span class="line">#endif // !VARIANT_DYLD</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>也就是说thread在退出时会释放自身资源，这个操作就包含了销毁autoreleasepool，在tls_delloc中，执行了pop操作。<br>这个实验本该到此就结束了，对于文章开始的问题在这里也已经有了答案，线程在销毁时会清空autoreleasepool。但是上述这个例子中的线程并没有加入runloop，只是一个一次性的线程。现在给这个线程加入runloop来看看效果会是怎么样的。</p>
+<h3 id="runloop-source-amp-autoreleasepool"><a href="#runloop-source-amp-autoreleasepool" class="headerlink" title="runloop source &amp; autoreleasepool"></a>runloop source &amp; autoreleasepool</h3><p>对于runloop，我们知道runloop一定要有source才能保证run起来以后不立即结束，而source有三种，custom source，port source，timer。<br>先加一个timer试试</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">- (void)createAndConfigObserverInSecondaryThread&#123;</span><br><span class="line">    [[NSThread currentThread] setName:@&quot;test runloop thread&quot;];</span><br><span class="line">    NSRunLoop *loop = [NSRunLoop currentRunLoop];</span><br><span class="line">    CFRunLoopObserverRef observer;</span><br><span class="line">    observer = CFRunLoopObserverCreate(CFAllocatorGetDefault(),</span><br><span class="line">                                       kCFRunLoopAllActivities,</span><br><span class="line">                                       true,      // repeat</span><br><span class="line">                                       0xFFFFFF,  // after CATransaction(2000000)</span><br><span class="line">                                       YYRunLoopObserverCallBack, NULL);</span><br><span class="line">    CFRunLoopRef cfrunloop = [loop getCFRunLoop];</span><br><span class="line">    if (observer) &#123;</span><br><span class="line">        </span><br><span class="line">        CFRunLoopAddObserver(cfrunloop, observer, kCFRunLoopCommonModes);</span><br><span class="line">        CFRelease(observer);</span><br><span class="line">    &#125;</span><br><span class="line">    [NSTimer scheduledTimerWithTimeInterval:5 target:self selector:@selector(testAction) userInfo:nil repeats:YES];</span><br><span class="line">    [loop run];</span><br><span class="line">    NSLog(@&quot;thread ending&quot;);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">- (void)testAction&#123;</span><br><span class="line">    __autoreleasing id test = [NSObject new];</span><br><span class="line">    obj = test;</span><br><span class="line">    NSLog(@&quot;obj = %@&quot;, obj);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>这里的oberserver没有什么，就是从YYKit里复制出来的一段observer代码，用于监控runloop的状态。感兴趣的可以看看。<br>在<code>testAction()</code>中加上watchpoint断点，观察obj的释放时机。<br><img src="/pics/timersource.png" alt><br>可以看到释放的时机在CFRunloopRunSpecific中，也就是runloop切换状态的时候，继续往上看发现<code>__CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__()</code>这个回调。这个函数中的实现如下</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">static void __CFRUNLOOP_IS_CALLING_OUT_TO_A_TIMER_CALLBACK_FUNCTION__(CFRunLoopTimerCallBack func, CFRunLoopTimerRef timer, void *info) &#123;</span><br><span class="line">    if (func) &#123;</span><br><span class="line">        func(timer, info);</span><br><span class="line">    &#125;</span><br><span class="line">    asm __volatile__(&quot;&quot;); // thwart tail-call optimization</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>这个名为<code>func</code>的callback是timer的一个属性，根据这个调用栈看到，释放autoreleasepool的操作应该是在这个callback中。这里猜测一下timer，应该是在自己的callback函数里插入了释放autorelesepool的代码。<br>然后用自己实现的source试一试，</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br></pre></td><td class="code"><pre><span class="line">- (void)createAndConfigObserverInSecondaryThread&#123;</span><br><span class="line">    __autoreleasing id test = [NSObject new];</span><br><span class="line">    NSLog(@&quot;obj = %@&quot;, test);</span><br><span class="line">    obj = test;</span><br><span class="line">    [[NSThread currentThread] setName:@&quot;test runloop thread&quot;];</span><br><span class="line">    NSRunLoop *loop = [NSRunLoop currentRunLoop];</span><br><span class="line">    CFRunLoopObserverRef observer;</span><br><span class="line">    observer = CFRunLoopObserverCreate(CFAllocatorGetDefault(),</span><br><span class="line">                                       kCFRunLoopAllActivities,</span><br><span class="line">                                       true,      // repeat</span><br><span class="line">                                       0xFFFFFF,  // after CATransaction(2000000)</span><br><span class="line">                                       YYRunLoopObserverCallBack, NULL);</span><br><span class="line">    CFRunLoopRef cfrunloop = [loop getCFRunLoop];</span><br><span class="line">    if (observer) &#123;</span><br><span class="line">        </span><br><span class="line">        CFRunLoopAddObserver(cfrunloop, observer, kCFRunLoopCommonModes);</span><br><span class="line">        CFRelease(observer);</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    CFRunLoopSourceRef source;</span><br><span class="line">    CFRunLoopSourceContext sourceContext = &#123;0, (__bridge void *)(self), NULL, NULL, NULL, NULL, NULL, NULL, NULL, &amp;runLoopSourcePerformRoutine&#125;;</span><br><span class="line">    source = CFRunLoopSourceCreate(NULL, 0, &amp;sourceContext);</span><br><span class="line">    CFRunLoopAddSource(cfrunloop, source, kCFRunLoopDefaultMode);</span><br><span class="line">    runLoopSource = source;</span><br><span class="line">    runLoop = cfrunloop;</span><br><span class="line">    [loop run];</span><br><span class="line">    NSLog(@&quot;thread ending&quot;);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">-(void)wakeupSource&#123;</span><br><span class="line">    //通知InputSource</span><br><span class="line">    CFRunLoopSourceSignal(runLoopSource);</span><br><span class="line">    //唤醒runLoop</span><br><span class="line">    CFRunLoopWakeUp(runLoop);</span><br><span class="line">    </span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">...</span><br><span class="line"></span><br><span class="line">void runLoopSourcePerformRoutine (void *info)</span><br><span class="line">&#123;</span><br><span class="line">	  __autoreleasing id test = [NSObject new];</span><br><span class="line">    obj = test;</span><br><span class="line">    // 如果不对obj赋值，obj会一直持有createAndConfigObserverInSecondaryThread函数入口的那个object，那个object不受这里面的autoreleasepool影响。</span><br><span class="line">    NSLog(@&quot;obj is %@&quot; , obj);</span><br><span class="line">    NSLog(@&quot;回调方法%@&quot;,[NSThread currentThread]);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>这里<code>wakeupSource()</code>是一个按钮的点击事件，用于唤醒runloop。runloop唤醒之后将执行<code>runLoopSourcePerformRoutine</code>函数，在<code>runLoopSourcePerformRoutine()</code>中观察obj的释放时机，发现是在[NSRunloop run:beforeDate:]中，查看GNU的实现</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br></pre></td><td class="code"><pre><span class="line">- (BOOL) runMode: (NSString*)mode beforeDate: (NSDate*)date</span><br><span class="line">&#123;</span><br><span class="line">  NSAutoreleasePool	*arp = [NSAutoreleasePool new];</span><br><span class="line">  NSString              *savedMode = _currentMode;</span><br><span class="line">  GSRunLoopCtxt		*context;</span><br><span class="line">  NSDate		*d;</span><br><span class="line"></span><br><span class="line">  NSAssert(mode != nil, NSInvalidArgumentException);</span><br><span class="line"></span><br><span class="line">  /* Process any pending notifications.</span><br><span class="line">   */</span><br><span class="line">  GSPrivateNotifyASAP(mode);</span><br><span class="line"></span><br><span class="line">  /* And process any performers scheduled in the loop (eg something from</span><br><span class="line">   * another thread.</span><br><span class="line">   */</span><br><span class="line">  _currentMode = mode;</span><br><span class="line">  context = NSMapGet(_contextMap, mode);</span><br><span class="line">  [self _checkPerformers: context];</span><br><span class="line">  _currentMode = savedMode;</span><br><span class="line"></span><br><span class="line">  /* Find out how long we can wait before first limit date.</span><br><span class="line">   * If there are no input sources or timers, return immediately.</span><br><span class="line">   */</span><br><span class="line">  d = [self limitDateForMode: mode];</span><br><span class="line">  if (nil == d)</span><br><span class="line">    &#123;</span><br><span class="line">      [arp drain];</span><br><span class="line">      return NO;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">  /* Use the earlier of the two dates we have (nil date is like distant past).</span><br><span class="line">   */</span><br><span class="line">  if (nil == date)</span><br><span class="line">    &#123;</span><br><span class="line">      [self acceptInputForMode: mode beforeDate: nil];</span><br><span class="line">    &#125;</span><br><span class="line">  else</span><br><span class="line">    &#123;</span><br><span class="line">      /* Retain the date in case the firing of a timer (or some other event)</span><br><span class="line">       * releases it.</span><br><span class="line">       */</span><br><span class="line">      d = [[d earlierDate: date] copy];</span><br><span class="line">      [self acceptInputForMode: mode beforeDate: d];</span><br><span class="line">      RELEASE(d);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">  [arp drain];</span><br><span class="line">  return YES;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>在GNU的实现中，targer执行相应的action操作是在<code>[self acceptInputForMode: mode beforeDate: d];</code>中，可以看到在<code>runMode: (NSString*)mode beforeDate: (NSDate*)date</code>方法中，其实是包裹了一个autoreleasepool的，也就是<code>arp</code>，如果在深入一些函数里面，发现其实很多地方都有autoreleasepool的函数，所以即使是我们自定义的source，执行函数中没有释放autoreleasepool的操作也不用担心，系统在各个关键入口都给我们加了这些操作。<br>文章到此就告一段落了，还有一种port source，也就是source1，这种source我没有去看，好奇的同学可以去看一看如果有什么不对我们一起讨论。</p>
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>1.子线程在使用autorelease对象时，如果没有autoreleasepool会在autoreleaseNoPage中懒加载一个出来。<br>2.在runloop的run:beforeDate，以及一些source的callback中，有autoreleasepool的push和pop操作，总结就是系统在很多地方都差不多autorelease的管理操作。<br>3.就算插入没有pop也没关系，在线程exit的时候会释放资源，执行AutoreleasePoolPage::tls_dealloc，在这里面会清空autoreleasepool。</p>
+<p>##参考<br><a href="https://blog.ibireme.com/2015/05/18/runloop/" target="_blank" rel="noopener">深入理解runloop</a><br><a href="http://blog.sunnyxx.com/2014/10/15/behind-autorelease/" target="_blank" rel="noopener">黑幕背后的Autorelease</a><br><a href="https://stackoverflow.com/questions/24952549/does-nsthread-create-autoreleasepool-automatically-now" target="_blank" rel="noopener">stackover flow</a></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://yoursite.com/2018/01/21/带着问题看源码----子线程AutoRelease对象何时释放/" data-id="cjw3k77w50007fao33ks5r8ew" class="article-share-link">Share</a>
+      
+      
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/05/14/从一个crash理解weak的延迟释放/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          从一个crash理解weak的延迟释放
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2018/01/17/带着问题读源码----KVO/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">带着问题读源码----KVO</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+
+  
+    
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/05/">May 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2018/01/">January 2018</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/09/">September 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/07/">July 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/03/">March 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/09/">September 2016</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/07/">July 2016</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/06/">June 2016</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2019/05/21/从一个crash体验strong的延迟释放/">从一个crash体验strong的延迟释放</a>
+          </li>
+        
+          <li>
+            <a href="/2019/05/14/从一个crash理解weak的延迟释放/">从一个crash理解weak的延迟释放</a>
+          </li>
+        
+          <li>
+            <a href="/2018/01/21/带着问题看源码----子线程AutoRelease对象何时释放/">带着问题看源码----子线程AutoRelease对象何时释放</a>
+          </li>
+        
+          <li>
+            <a href="/2018/01/17/带着问题读源码----KVO/">带着问题读源码----KVO</a>
+          </li>
+        
+          <li>
+            <a href="/2017/09/29/KVC原理小记/">KVC原理小记录</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2019 su<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  <link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+  <script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+<script src="/js/script.js"></script>
+
+
+
+  </div>
+</body>
+</html>

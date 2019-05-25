@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head><meta name="generator" content="Hexo 3.8.0">
+  <meta charset="utf-8">
+  
+
+  
+  <title>从一个crash体验strong的延迟释放 | su</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="文章的标题看上去有点唬人, 毕竟strong作为iOS开发中一个基础的不能再基础的语义声明, 有什么好讲的…  事实上本文源自于前文从一个crash理解weak的延迟释放写完之后与小伙伴的讨论, 既然如此我们先简单回顾一下. 背景在前文中, 我们在文章末尾给出了一个demo, 模拟笔者在项目中的crash.123456789101112131415161718192021222324252627@">
+<meta property="og:type" content="article">
+<meta property="og:title" content="从一个crash体验strong的延迟释放">
+<meta property="og:url" content="http://yoursite.com/2019/05/21/从一个crash体验strong的延迟释放/index.html">
+<meta property="og:site_name" content="su">
+<meta property="og:description" content="文章的标题看上去有点唬人, 毕竟strong作为iOS开发中一个基础的不能再基础的语义声明, 有什么好讲的…  事实上本文源自于前文从一个crash理解weak的延迟释放写完之后与小伙伴的讨论, 既然如此我们先简单回顾一下. 背景在前文中, 我们在文章末尾给出了一个demo, 模拟笔者在项目中的crash.123456789101112131415161718192021222324252627@">
+<meta property="og:locale" content="zh-Hans">
+<meta property="og:image" content="http://yoursite.com/pics/wildpointer.003.jpeg">
+<meta property="og:image" content="http://yoursite.com/pics/property_getter.png">
+<meta property="og:image" content="http://yoursite.com/pics/property_ivar.png">
+<meta property="og:image" content="http://yoursite.com/pics/manager_getter.png">
+<meta property="og:image" content="http://yoursite.com/pics/MemoryPic.png">
+<meta property="og:updated_time" content="2019-05-22T08:37:46.611Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="从一个crash体验strong的延迟释放">
+<meta name="twitter:description" content="文章的标题看上去有点唬人, 毕竟strong作为iOS开发中一个基础的不能再基础的语义声明, 有什么好讲的…  事实上本文源自于前文从一个crash理解weak的延迟释放写完之后与小伙伴的讨论, 既然如此我们先简单回顾一下. 背景在前文中, 我们在文章末尾给出了一个demo, 模拟笔者在项目中的crash.123456789101112131415161718192021222324252627@">
+<meta name="twitter:image" content="http://yoursite.com/pics/wildpointer.003.jpeg">
+  
+    <link rel="alternate" href="/atom.xml" title="su" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+</html>
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">su</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://yoursite.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-从一个crash体验strong的延迟释放" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/05/21/从一个crash体验strong的延迟释放/" class="article-date">
+  <time datetime="2019-05-21T09:42:28.556Z" itemprop="datePublished">2019-05-21</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      从一个crash体验strong的延迟释放
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>文章的标题看上去有点唬人, 毕竟strong作为iOS开发中一个基础的不能再基础的语义声明, 有什么好讲的… </p>
+<p>事实上本文源自于前文<a href="https://suhou.github.io/2019/05/14/%E4%BB%8E%E4%B8%80%E4%B8%AAcrash%E7%90%86%E8%A7%A3weak%E7%9A%84%E5%BB%B6%E8%BF%9F%E9%87%8A%E6%94%BE/" target="_blank" rel="noopener">从一个crash理解weak的延迟释放</a>写完之后与小伙伴的讨论, 既然如此我们先简单回顾一下.</p>
+<h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><p>在前文中, 我们在文章末尾给出了一个demo, 模拟笔者在项目中的crash.<br><figure class="highlight objc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">@interface</span> <span class="title">ViewController</span> ()</span></span><br><span class="line"><span class="keyword">@property</span> (<span class="keyword">nonatomic</span>, <span class="keyword">strong</span>) Manager *strongManager;</span><br><span class="line"><span class="keyword">@property</span> (<span class="keyword">nonatomic</span>, <span class="keyword">strong</span>) Operation *strongOperation;</span><br><span class="line"><span class="keyword">@end</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">@implementation</span> <span class="title">ViewController</span></span></span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)viewDidLoad &#123;</span><br><span class="line">    [<span class="keyword">super</span> viewDidLoad];</span><br><span class="line">    <span class="built_in">UIButton</span> *btn = [[<span class="built_in">UIButton</span> alloc] initWithFrame:<span class="built_in">CGRectMake</span>(<span class="number">100</span>, <span class="number">100</span>, <span class="number">100</span>, <span class="number">100</span>)];</span><br><span class="line">    [btn setBackgroundColor:[<span class="built_in">UIColor</span> redColor]];</span><br><span class="line">    [btn addTarget:<span class="keyword">self</span> action:<span class="keyword">@selector</span>(btnAction:) forControlEvents:<span class="built_in">UIControlEventTouchUpInside</span>];</span><br><span class="line">    [<span class="keyword">self</span>.view addSubview:btn];</span><br><span class="line">    <span class="comment">// 模拟网络请求</span></span><br><span class="line">    <span class="keyword">self</span>.strongManager = [Manager new];</span><br><span class="line">    __<span class="keyword">weak</span> <span class="keyword">typeof</span>(<span class="keyword">self</span>) weakSelf = <span class="keyword">self</span>;</span><br><span class="line">    <span class="keyword">self</span>.strongManager.endBlock = ^&#123;</span><br><span class="line">        weakSelf.strongManager = <span class="literal">nil</span>;</span><br><span class="line">    &#125;;</span><br><span class="line">    </span><br><span class="line">    <span class="keyword">self</span>.strongOperation = [Operation new];</span><br><span class="line">    [<span class="keyword">self</span>.strongOperation setTarget:<span class="keyword">self</span>.strongManager selector:<span class="keyword">@selector</span>(testMethod)];</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)btnAction:(<span class="keyword">id</span>)sender&#123;</span><br><span class="line">    [<span class="keyword">self</span>.strongOperation performCallBack]; <span class="comment">// &lt;- 1</span></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<figure class="highlight objc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">@interface</span> <span class="title">Manager</span> : <span class="title">NSObject</span></span></span><br><span class="line"><span class="keyword">@property</span> (<span class="keyword">nonatomic</span>, <span class="keyword">copy</span>) <span class="keyword">void</span>(^endBlock)(<span class="keyword">void</span>);</span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)testMethod;</span><br><span class="line"><span class="keyword">@end</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">@implementation</span> <span class="title">Manager</span></span></span><br><span class="line">- (<span class="keyword">void</span>)testMethod&#123;</span><br><span class="line">    <span class="keyword">if</span> (<span class="keyword">self</span>.endBlock) &#123;</span><br><span class="line">        <span class="keyword">self</span>.endBlock();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="built_in">NSLog</span>(<span class="string">@"%@"</span>, <span class="keyword">self</span>);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)dealloc&#123;</span><br><span class="line">    <span class="built_in">NSLog</span>(<span class="string">@"dealloc"</span>);</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">@end</span></span><br></pre></td></tr></table></figure>
+<figure class="highlight objc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">@interface</span> <span class="title">Operation</span> : <span class="title">NSObject</span></span></span><br><span class="line"><span class="keyword">@property</span> (<span class="keyword">nonatomic</span>, <span class="keyword">weak</span>) <span class="keyword">id</span> target;</span><br><span class="line"><span class="keyword">@property</span> (<span class="keyword">nonatomic</span>, <span class="keyword">assign</span>)SEL finishSelector;</span><br><span class="line">- (<span class="keyword">void</span>)setTarget:(<span class="keyword">id</span>)target selector:(SEL)selector;</span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)performCallBack;</span><br><span class="line"><span class="keyword">@end</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">@implementation</span> <span class="title">Operation</span></span></span><br><span class="line">- (<span class="keyword">void</span>)setTarget:(<span class="keyword">id</span>)target selector:(SEL)selector&#123;</span><br><span class="line">    <span class="keyword">self</span>.target = target;</span><br><span class="line">    <span class="keyword">self</span>.finishSelector = selector;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)performCallBack&#123;</span><br><span class="line">    <span class="built_in">NSMethodSignature</span> *signature = [<span class="keyword">self</span>.target methodSignatureForSelector:<span class="keyword">self</span>.finishSelector];</span><br><span class="line">    <span class="built_in">NSInvocation</span> *invocation = [<span class="built_in">NSInvocation</span> invocationWithMethodSignature:signature];</span><br><span class="line">    [invocation setTarget:<span class="keyword">self</span>.target];</span><br><span class="line">    [invocation setSelector:<span class="keyword">self</span>.finishSelector];</span><br><span class="line">    [invocation invoke];</span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">@end</span></span><br></pre></td></tr></table></figure>
+<p>在位置<code>1</code>处模拟网络请求回来进行回调, 然后crash, 原因如前文所说这是没有任何问题的. 然而前文中还有一张图<br><img src="/pics/wildpointer.003.jpeg" alt="野指针" title="野指针"><br>可以看到上面给出的demo其实是对图里的过程进行了简化, 所以来看一看正常按照图上写的话demo应该是什么样子.<br><figure class="highlight objc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">@interface</span> <span class="title">ViewController</span> ()</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">@property</span> (<span class="keyword">nonatomic</span>, <span class="keyword">strong</span>) Manager *manager;</span><br><span class="line"></span><br><span class="line"><span class="keyword">@end</span></span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">@implementation</span> <span class="title">ViewController</span></span></span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)viewDidLoad &#123;</span><br><span class="line">    [<span class="keyword">super</span> viewDidLoad];</span><br><span class="line">    <span class="comment">//正常写代码的时候还是推荐使用self.debugObj这种形式, 这里是为了排除干扰因素于是全部是用ivar的方式</span></span><br><span class="line">    _manager = [Manager new];</span><br><span class="line">    __<span class="keyword">weak</span> <span class="keyword">typeof</span>(<span class="keyword">self</span>) weakSelf = <span class="keyword">self</span>;</span><br><span class="line">    _manager.testBlock = ^&#123;</span><br><span class="line">        weakSelf.manager = <span class="literal">nil</span>;</span><br><span class="line">    &#125;;</span><br><span class="line">    <span class="comment">//发起网络请求</span></span><br><span class="line">    [<span class="keyword">self</span>.manager networkRequest]; <span class="comment">//&lt;- 2</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">@end</span></span><br></pre></td></tr></table></figure></p>
+<figure class="highlight objc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><span class="line">Manager</span><br><span class="line">.h略过</span><br><span class="line"></span><br><span class="line"><span class="class"><span class="keyword">@implementation</span> <span class="title">Manager</span></span></span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)dealloc &#123;</span><br><span class="line">    <span class="built_in">NSLog</span>(<span class="string">@"dealloc"</span>);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">- (<span class="keyword">void</span>)networkRequest &#123;</span><br><span class="line">    Operation *operation = [Operation new];</span><br><span class="line">    operation.target = <span class="keyword">self</span>;</span><br><span class="line">    operation.selector = <span class="keyword">@selector</span>(networkCallBack);</span><br><span class="line">    [operation performCallback];</span><br><span class="line">&#125;</span><br><span class="line"><span class="comment">// call back</span></span><br><span class="line">- (<span class="keyword">void</span>)networkCallBack &#123;</span><br><span class="line">    <span class="keyword">if</span> (<span class="keyword">self</span>.testBlock) &#123;</span><br><span class="line">        <span class="keyword">self</span>.testBlock();</span><br><span class="line">    &#125;</span><br><span class="line">    <span class="built_in">NSLog</span>(<span class="string">@"%@"</span>, <span class="keyword">self</span>);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="keyword">@end</span></span><br></pre></td></tr></table></figure>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">Operation .h .m</span><br><span class="line">和文章开头demo中的operation一样</span><br></pre></td></tr></table></figure>
+<p>这个demo在代码<code>2</code>的位置模拟网络请求, 网络请求封装在<code>manager</code>中, 事实上, 项目代码里的网络请求也是这么写的, 唯一的不一样地方在于<strong><code>networkCallBack</code>方法在这里是同步调用, 而正常项目中网络请求是异步回来的</strong>. 然后有意思的地方就来了, 可能大家都能猜到, 上面这个demo中这样并不会crash…</p>
+<h2 id="追根溯源"><a href="#追根溯源" class="headerlink" title="追根溯源"></a>追根溯源</h2><p>于是开启大家来找茬模式, 仔细比对两份代码不同的地方, demo其实只做了一件事,在代码位置<code>2</code>处通过<code>mananger</code>的getter方法来获取对象然后调用<code>networkRequest</code>方法, 而<code>networkRequest</code>中一系列操作会将<code>manager</code>销毁.<br>在位置<code>2</code>处尝试把<code>self.manager</code>改为<code>_manager</code>, 成功的触发野指针crash.<br><del>于是笔者一开始很容易的就认为, <code>self.manager</code>所调用的getter方法在return的时候为返回的对象加了autorelease操作, 导致manager对象在置为nil后还能存活</del><br>然鹅, 在这个demo中, <code>manager</code>对象<code>dealloc</code>的时候调用栈里并没有autorelease销毁的调用栈…所以上面那个结论其实是不成立的.<br>于是想到看一看这两种调用到底有什么差别, 把这两种写法的汇编拉出来看一看:<br><img src="/pics/property_getter.png" alt="property getter" title="property getter"><br><img src="/pics/property_ivar.png" alt="property ivar" title="property ivar"><br>第一张图是通过getter拿到对象的写法, 可以清晰的看到这种写法多了<strong><code>_objc_retainAutoreleasedReturnValue</code>和<code>_objc_release</code></strong>两个操作.<br>而getter方法中实际上的操作是:<br><img src="/pics/manager_getter.png" alt="manager getter" title="manager getter"><br>之前笔者认为getter方法在return的时候会调用<code>objc_autoreleaseRturnValue</code>, 可是这里很清楚显示调用的是<code>_objc_retainAutoreleaseReturnValue</code>, 实际上, 如果没有重写getter方法的话, 这句话都不会加.<br>那么问题就很简单了, 看一看这几个操作的作用是什么就好了<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">// Prepare a value at +0 for return through a +0 autoreleasing convention.</span><br><span class="line">id </span><br><span class="line">objc_retainAutoreleaseReturnValue(id obj)</span><br><span class="line">&#123;</span><br><span class="line">    if (prepareOptimizedReturn(ReturnAtPlus0)) return obj;</span><br><span class="line"></span><br><span class="line">    // not objc_autoreleaseReturnValue(objc_retain(obj)) </span><br><span class="line">    // because we don&apos;t need another optimization attempt</span><br><span class="line">    return objc_retainAutoreleaseAndReturn(obj);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">// Accept a value returned through a +0 autoreleasing convention for use at +1.</span><br><span class="line">id</span><br><span class="line">objc_retainAutoreleasedReturnValue(id obj)</span><br><span class="line">&#123;</span><br><span class="line">    if (acceptOptimizedReturn() == ReturnAtPlus1) return obj;</span><br><span class="line"></span><br><span class="line">    return objc_retain(obj);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
+<p>不同版本里的<code>runtime</code>里对这几个函数的实现可能不太一样, 但是大概的意思是一样的, 这里摘抄的版本是<code>objc4-709</code>. 这里关键的函数<code>objc_retainAutoreleasedReturnValue</code>也就是前文中使用getter方式比ivar方式多的两部操作之一里面大概做了这么一件事, 它会与<code>objc_autoreleaseReturnValue</code>配合, 如果在返回值身上调用<code>objc_autoreleaseReturnValue</code>, 这个返回值会先被存储在TLS中, 然后外部接收方调用<code>objc_retainAutoreleasedReturnValue</code>时, 发现TLS中正好存了这个对象便直接返回这个对象, 从而减去存入autorelesepool的过程, 这一TLS优化在《Objective-C高级编程 iOS与OS X多线程和内存管理》一书中有一定篇幅的解释.<br>我们这里则是走入了没有优化的分支语句中, 也就是<code>return objc_retain(obj);</code>, 然后在<code>_objc_msgSend</code>之后调用的<code>_objc_release</code>. 这下就全明白了, 也就是说使用getter方法进行对象方法调用的时候, 编译器和<code>runtime</code>会帮我们悄咪咪的把对象引用计数+1, 在方法调用结束以后再减一. 这样一来我们这个方法在同步调用的时候就不用担心在同步的调用中因为对象被释放而引发野指针, 因为就算当前同步调用中当前对象实际持有者‘释放’了它, 在方法调用结束前还有runtime悄悄的给它+1s, 也就是文章标题中所说的延迟释放.<br>回到crash上面, 前面说到上面的demo中和实际项目中的区别是demo中是同步的, 而项目中是是异步的, 网络请求回调回来的时候<code>networkRequest</code>已经走完了, 也就是<code>runtime</code>中增加的引用计数已经释放了, 那么自然在实际项目中就crash了.<br>只聚焦这个问题的话,其实答案已经给出了, 不过依然还有很多值得探索, 例如本文提到其它几个函数里都做了些啥, 例如什么时候在return的时候会加上<code>objc_autoreleaseReturnValue</code>(通过汇编看是在return一个局部变量的时候). 如果重写demo里ViewController的manager getter方法的话, 又会有惊喜. 深入的话需要大量篇幅, 所以先用这张经典的图收尾吧…<br><img src="/pics/MemoryPic.png" alt="Memory" title="Memory"></p>
+<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>惯例总结一下:</p>
+<ol>
+<li>警惕在对象持有的block中释放该对象本身这种代码<figure class="highlight objc"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">weakSelf.manager.testBlock = ^&#123;</span><br><span class="line">        weakSelf.manager = <span class="literal">nil</span>;</span><br><span class="line">    &#125;;</span><br></pre></td></tr></table></figure>
+</li>
+</ol>
+<p>出现这种代码的时候想一想在使用过程中有没有可能出现文中类似情况.</p>
+<ol start="2">
+<li>解释一段代码为什么没有问题可能比解释一段代码为什么有问题更加困难. 编译器和<code>runtime</code>以及<code>Runloop</code>为开发者的代码提供了很多的优化, 除了文中说到的引用计数增减以外还有autoreleasepool的运用, 所以开发过程中能遵守原本的内存管理语义就尽量遵守, 笔者所在的团队代码checkList中有一条是强调除了几个特定的方法中使用ivar方式访问变量, 其它都是用self.xxx的方式访问, 这样子的规范其实就避免了本文第二个demo中的crash.</li>
+<li>最后给出一个简化的demo, 比上面那两个还要简化, 方便观察</li>
+<li>本文中如果有说的不对的地方, 欢迎大家及时指出来.<h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><a href="https://www.galloway.me.uk/2012/02/how-does-objc_retainautoreleasedreturnvalue-work/" target="_blank" rel="noopener">How does objc_retainAutoreleasedReturnValue work?</a><br><a href="https://www.mikeash.com/pyblog/friday-qa-2011-09-30-automatic-reference-counting.html" target="_blank" rel="noopener">Friday Q&amp;A 2011-09-30: Automatic Reference Counting</a></li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://yoursite.com/2019/05/21/从一个crash体验strong的延迟释放/" data-id="cjw3k77w40006fao3v45v40ji" class="article-share-link">Share</a>
+      
+      
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+  
+    <a href="/2019/05/14/从一个crash理解weak的延迟释放/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">从一个crash理解weak的延迟释放</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+
+  
+    
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/05/">May 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2018/01/">January 2018</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/09/">September 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/07/">July 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2017/03/">March 2017</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/09/">September 2016</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/07/">July 2016</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2016/06/">June 2016</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2019/05/21/从一个crash体验strong的延迟释放/">从一个crash体验strong的延迟释放</a>
+          </li>
+        
+          <li>
+            <a href="/2019/05/14/从一个crash理解weak的延迟释放/">从一个crash理解weak的延迟释放</a>
+          </li>
+        
+          <li>
+            <a href="/2018/01/21/带着问题看源码----子线程AutoRelease对象何时释放/">带着问题看源码----子线程AutoRelease对象何时释放</a>
+          </li>
+        
+          <li>
+            <a href="/2018/01/17/带着问题读源码----KVO/">带着问题读源码----KVO</a>
+          </li>
+        
+          <li>
+            <a href="/2017/09/29/KVC原理小记/">KVC原理小记录</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2019 su<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  <link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+  <script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+<script src="/js/script.js"></script>
+
+
+
+  </div>
+</body>
+</html>
